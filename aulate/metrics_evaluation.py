@@ -20,6 +20,7 @@ from datetime import datetime
 import librosa
 from typing import Dict, Any, Callable, Optional, Union
 from dataclasses import dataclass
+from torchaudio.pipelines import SQUIM_OBJECTIVE
 
 # pip install pesq pystoi torch-mir-eval torchaudio pandas torch transformers soundfile tqdm numpy git+https://github.com/descriptinc/audiotools
 
@@ -182,31 +183,62 @@ class AudioMetricsEvaluator:
         self,
         reference_audio: Union[np.ndarray, torch.Tensor],
         generated_audio: Union[np.ndarray, torch.Tensor],
-        sr: int = 24000
+        ref_sr: int = 16000,
+        gen_sr: int = 24000,
     ) -> AudioMetricsResult:
         """Calculate PESQ, STOI, SI-SDR, SIM-O, and SIM-R metrics"""
-        # Convert to numpy and ensure float32
+        # Resample reference and generated audio to a common sample rate for SI-SDR calculation
         if isinstance(reference_audio, torch.Tensor):
             reference_audio = reference_audio.detach().cpu().numpy()
         if isinstance(generated_audio, torch.Tensor):
             generated_audio = generated_audio.detach().cpu().numpy()
-
-
-        reference_audio = reference_audio.astype(np.float32)
-        generated_audio = generated_audio.astype(np.float32)
-
-        # Ensure same length
         min_len = min(len(reference_audio), len(generated_audio))
         reference_audio = reference_audio[:min_len]
         generated_audio = generated_audio[:min_len]
+        target_sr = SQUIM_OBJECTIVE.sample_rate
+        if ref_sr != target_sr:
+            reference_audio = librosa.resample(reference_audio.astype(np.float32), orig_sr=ref_sr, target_sr=target_sr)
+        if gen_sr != target_sr:
+            generated_audio = librosa.resample(generated_audio.astype(np.float32), orig_sr=gen_sr, target_sr=target_sr)
 
-        # Normalize audio
-        reference_audio = reference_audio / (np.max(np.abs(reference_audio)) + 1e-8)
-        generated_audio = generated_audio / (np.max(np.abs(generated_audio)) + 1e-8)
+        # Convert to numpy and ensure float32
+        reference_audio = reference_audio.astype(np.float32)
+        generated_audio = generated_audio.astype(np.float32)
 
-        # Resample to 16kHz for PESQ
-        reference_audio_16k = librosa.resample(reference_audio, orig_sr=sr, target_sr=16000)
-        generated_audio_16k = librosa.resample(generated_audio, orig_sr=sr, target_sr=16000)
+        # Convert to torch tensors for SI-SDR calculation
+        reference_tensor = torch.tensor(reference_audio)[None, :].to(self.device,dtype=torch.float32)
+        generated_tensor = torch.tensor(generated_audio)[None, :].to(self.device,dtype=torch.float32)
+
+        # Ensure same length
+        min_len = min(reference_tensor.shape[1], generated_tensor.shape[1])
+        reference_tensor = reference_tensor[:, :min_len]
+        generated_tensor = generated_tensor[:, :min_len]
+
+        # Calculate SI-SDR using SQUIM
+        try:
+            max_audio_length = 15 * target_sr
+            model = SQUIM_OBJECTIVE.get_model().to(self.device)
+            with torch.no_grad():
+                reference_tensor = reference_tensor[:, :min(max_audio_length, reference_tensor.shape[1])]
+                generated_tensor = generated_tensor[:, :min(max_audio_length, generated_tensor.shape[1])]
+                _, _, sisdr_score = model(generated_tensor)
+                sisdr_score = sisdr_score.cpu()[0]
+        except Exception as e:
+            print(f"SI-SDR calculation failed: {str(e)}")
+            sisdr_score = float('-inf')
+        finally:
+            if 'model' in locals():
+                model.cpu()
+                del model
+                torch.cuda.empty_cache()
+
+        # Resample reference and generated audio to 16kHz for PESQ
+        reference_audio_16k = librosa.resample(reference_audio, orig_sr=target_sr, target_sr=16000)
+        generated_audio_16k = librosa.resample(generated_audio, orig_sr=target_sr, target_sr=16000)
+
+        # Resample to 24kHz for STOI (as it works better with this sample rate)
+        reference_audio_24k = librosa.resample(reference_audio, orig_sr=target_sr, target_sr=24000)
+        generated_audio_24k = librosa.resample(generated_audio, orig_sr=target_sr, target_sr=24000)
 
         # Calculate standard metrics
         try:
@@ -216,22 +248,16 @@ class AudioMetricsEvaluator:
             pesq_score = -1.0
 
         try:
-            stoi_score = stoi(reference_audio, generated_audio, sr, extended=False)
+            stoi_score = stoi(reference_audio_24k[:min(len(reference_audio_24k),len(generated_audio_24k))], generated_audio_24k[:min(len(reference_audio_24k),len(generated_audio_24k))], 24000, extended=False)
         except Exception as e:
             print(f"STOI calculation failed: {str(e)}")
             stoi_score = -1.0
 
-        try:
-            sisdr_score = si_sdr(reference_audio.astype(np.float64), generated_audio.astype(np.float64))
-        except Exception as e:
-            print(f"SI-SDR calculation failed: {str(e)}")
-            sisdr_score = float('-inf')
-
         # Calculate SIM-O (Overall Similarity)
         try:
             # Using MFCCs for overall spectral similarity
-            mfcc_ref = librosa.feature.mfcc(y=reference_audio, sr=sr, n_mfcc=13)
-            mfcc_gen = librosa.feature.mfcc(y=generated_audio, sr=sr, n_mfcc=13)
+            mfcc_ref = librosa.feature.mfcc(y=reference_audio_24k, sr=24000, n_mfcc=13)
+            mfcc_gen = librosa.feature.mfcc(y=generated_audio_24k, sr=24000, n_mfcc=13)
 
             # Normalize MFCCs
             mfcc_ref = (mfcc_ref - np.mean(mfcc_ref)) / (np.std(mfcc_ref) + 1e-8)
@@ -250,8 +276,8 @@ class AudioMetricsEvaluator:
         # Calculate SIM-R (Rhythm Similarity)
         try:
             # Using onset strength envelope
-            onset_env_ref = librosa.onset.onset_strength(y=reference_audio, sr=sr)
-            onset_env_gen = librosa.onset.onset_strength(y=generated_audio, sr=sr)
+            onset_env_ref = librosa.onset.onset_strength(y=reference_audio_24k, sr=24000)
+            onset_env_gen = librosa.onset.onset_strength(y=generated_audio_24k, sr=24000)
 
             # Normalize onset envelopes
             onset_env_ref = (onset_env_ref - np.mean(onset_env_ref)) / (np.std(onset_env_ref) + 1e-8)
@@ -271,6 +297,100 @@ class AudioMetricsEvaluator:
             sim_o=float(sim_o),
             sim_r=float(sim_r)
         )
+
+    # def calculate_metrics(
+    #     self,
+    #     reference_audio: Union[np.ndarray, torch.Tensor],
+    #     generated_audio: Union[np.ndarray, torch.Tensor],
+    #     sr: int = 24000
+    # ) -> AudioMetricsResult:
+    #     """Calculate PESQ, STOI, SI-SDR, SIM-O, and SIM-R metrics"""
+    #     # Convert to numpy and ensure float32
+    #     if isinstance(reference_audio, torch.Tensor):
+    #         reference_audio = reference_audio.detach().cpu().numpy()
+    #     if isinstance(generated_audio, torch.Tensor):
+    #         generated_audio = generated_audio.detach().cpu().numpy()
+
+
+    #     reference_audio = reference_audio.astype(np.float32)
+    #     generated_audio = generated_audio.astype(np.float32)
+
+    #     # Ensure same length
+    #     min_len = min(len(reference_audio), len(generated_audio))
+    #     reference_audio = reference_audio[:min_len]
+    #     generated_audio = generated_audio[:min_len]
+
+    #     # Normalize audio
+    #     reference_audio = reference_audio / (np.max(np.abs(reference_audio)) + 1e-8)
+    #     generated_audio = generated_audio / (np.max(np.abs(generated_audio)) + 1e-8)
+
+    #     # Resample to 16kHz for PESQ
+    #     reference_audio_16k = librosa.resample(reference_audio, orig_sr=sr, target_sr=16000)
+    #     generated_audio_16k = librosa.resample(generated_audio, orig_sr=sr, target_sr=16000)
+
+    #     # Calculate standard metrics
+    #     try:
+    #         pesq_score = pesq(16000, reference_audio_16k, generated_audio_16k, 'wb')
+    #     except Exception as e:
+    #         print(f"PESQ calculation failed: {str(e)}")
+    #         pesq_score = -1.0
+
+    #     try:
+    #         stoi_score = stoi(reference_audio_16k, generated_audio_16k, 16000, extended=False)
+    #     except Exception as e:
+    #         print(f"STOI calculation failed: {str(e)}")
+    #         stoi_score = -1.0
+
+    #     try:
+    #         sisdr_score = si_sdr(reference_audio_16k.astype(np.float64), generated_audio_16k.astype(np.float64))
+    #     except Exception as e:
+    #         print(f"SI-SDR calculation failed: {str(e)}")
+    #         sisdr_score = float('-inf')
+
+    #     # Calculate SIM-O (Overall Similarity)
+    #     try:
+    #         # Using MFCCs for overall spectral similarity
+    #         mfcc_ref = librosa.feature.mfcc(y=reference_audio, sr=sr, n_mfcc=13)
+    #         mfcc_gen = librosa.feature.mfcc(y=generated_audio, sr=sr, n_mfcc=13)
+
+    #         # Normalize MFCCs
+    #         mfcc_ref = (mfcc_ref - np.mean(mfcc_ref)) / (np.std(mfcc_ref) + 1e-8)
+    #         mfcc_gen = (mfcc_gen - np.mean(mfcc_gen)) / (np.std(mfcc_gen) + 1e-8)
+
+    #         # Calculate cosine similarity for each frame and take mean
+    #         sim_o = np.mean([
+    #             np.dot(mfcc_ref[:, i], mfcc_gen[:, i]) /
+    #             (np.linalg.norm(mfcc_ref[:, i]) * np.linalg.norm(mfcc_gen[:, i]) + 1e-8)
+    #             for i in range(min(mfcc_ref.shape[1], mfcc_gen.shape[1]))
+    #         ])
+    #     except Exception as e:
+    #         print(f"SIM-O calculation failed: {str(e)}")
+    #         sim_o = -1.0
+
+    #     # Calculate SIM-R (Rhythm Similarity)
+    #     try:
+    #         # Using onset strength envelope
+    #         onset_env_ref = librosa.onset.onset_strength(y=reference_audio, sr=sr)
+    #         onset_env_gen = librosa.onset.onset_strength(y=generated_audio, sr=sr)
+
+    #         # Normalize onset envelopes
+    #         onset_env_ref = (onset_env_ref - np.mean(onset_env_ref)) / (np.std(onset_env_ref) + 1e-8)
+    #         onset_env_gen = (onset_env_gen - np.mean(onset_env_gen)) / (np.std(onset_env_gen) + 1e-8)
+
+    #         # Calculate correlation coefficient
+    #         sim_r = np.corrcoef(onset_env_ref[:min(len(onset_env_ref), len(onset_env_gen))],
+    #                            onset_env_gen[:min(len(onset_env_ref), len(onset_env_gen))])[0, 1]
+    #     except Exception as e:
+    #         print(f"SIM-R calculation failed: {str(e)}")
+    #         sim_r = -1.0
+
+    #     return AudioMetricsResult(
+    #         pesq=float(pesq_score),
+    #         stoi=float(stoi_score),
+    #         si_sdr=float(sisdr_score),
+    #         sim_o=float(sim_o),
+    #         sim_r=float(sim_r)
+    #     )
 
     def evaluate_batch(
         self,
@@ -296,6 +416,7 @@ class AudioMetricsEvaluator:
             try:
                 if isinstance(sample, tuple):
                     text, reference_audio = sample
+                    print(text,prompt)
                     generated_audio = self.infer_text_to_audio(text, prompt) if prompt else self.infer_text_to_audio(text, "")
                     if isinstance(generated_audio, AudioSignal):
                         generated_audio = generated_audio.audio_data.squeeze()
@@ -307,6 +428,11 @@ class AudioMetricsEvaluator:
                     text = None
 
                 metrics = self.calculate_metrics(reference_audio, generated_audio)
+                print({'PESQ': metrics.pesq,
+                    'STOI': metrics.stoi,
+                    'SI-SDR': metrics.si_sdr,
+                    'SIM-O': metrics.sim_o,
+                    'SIM-R': metrics.sim_r})
 
                 result_dict = {
                     'PESQ': metrics.pesq,
@@ -324,8 +450,11 @@ class AudioMetricsEvaluator:
 
                 if save_audio:
                     audio_filename = f"gen_{idx}.wav"
+                    audio_filename_ = f"orig_{idx}.wav"
                     audio_path = os.path.join(self.gen_audio_dir, audio_filename)
-                    sf.write(audio_path, generated_audio.cpu().numpy().astype(np.float32), sr=24000)
+                    audio_path_ = os.path.join(self.gen_audio_dir, audio_filename_)
+                    sf.write(audio_path, generated_audio.astype(np.float32), 44100)
+                    sf.write(audio_path_, reference_audio.astype(np.float32), 16000)
                     result_dict['audio_path'] = audio_path
 
                 results.append(result_dict)
@@ -350,7 +479,7 @@ class AudioMetricsEvaluator:
         num_samples: int = 200,
         prompt: str = "with a natural speaking voice, clear pronunciation, and minimal background noise",
         subset: str = "test-clean",
-        save_audio: bool = False
+        save_audio=True,
     ):
         """Evaluate metrics on LibriSpeech samples"""
         print(f"Loading LibriSpeech dataset ({subset})...")
@@ -365,8 +494,8 @@ class AudioMetricsEvaluator:
         for idx in tqdm(indices, desc="Loading audio files"):
             waveform, sample_rate, text, speaker_id, chapter_id, utterance_id = dataset[torch.tensor(idx).long()]
             reference_audio = waveform.numpy().squeeze()
-            if sample_rate != 24000:
-                reference_audio = librosa.resample(reference_audio, orig_sr=sample_rate, target_sr=24000)
+            # if sample_rate != 24000:
+            #     reference_audio = librosa.resample(reference_audio, orig_sr=sample_rate, target_sr=24000)
             samples.append((text, reference_audio))
             metadata.append({
                 'speaker_id': speaker_id,
