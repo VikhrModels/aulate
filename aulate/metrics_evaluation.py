@@ -28,6 +28,8 @@ class AudioMetricsResult:
     pesq: float
     stoi: float
     si_sdr: float
+    sim_o: float  # Overall similarity
+    sim_r: float  # Rhythm similarity
     text: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
 
@@ -96,10 +98,7 @@ class AudioMetricsEvaluator:
         self.model.generation_config.pad_token_id = self.tokenizer.pad_token_id
 
         # Load quantizer
-        self.quantizer = WavTokenizer.from_pretrained0802(
-            "WavTokenizer/configs/wavtokenizer_smalldata_frame40_3s_nq1_code4096_dim512_kmeans200_attn.yaml",
-            "audiotokenizer/wavtokenizer_large_unify_600_24k.ckpt"
-        )
+        self.quantizer = WavTokenizer.from_pretrained0802(speechtokenizer_config, speechtokenizer_checkpoint)
         self.quantizer = self.quantizer.to(self.model.device)
 
     def set_decode_fn(self, decode_fn: Callable) -> None:
@@ -175,21 +174,7 @@ class AudioMetricsEvaluator:
         return self.decode_tts(output_audio_tokens[0], self.quantizer, 1, len(self.tokenizer), soa, eoa)
 
     def si_sdr(self, reference: torch.Tensor, estimation: torch.Tensor) -> float:
-        """Calculate Scale-Invariant Signal-to-Distortion Ratio (SI-SDR)"""
-        reference = reference.to(self.device)
-        estimation = estimation.to(self.device)
-
-        reference = reference - torch.mean(reference)
-        estimation = estimation - torch.mean(estimation)
-
-        alpha = torch.sum(reference * estimation) / torch.sum(reference ** 2)
-        scaled_reference = alpha * reference
-
-        noise = estimation - scaled_reference
-        ratio = torch.sum(scaled_reference ** 2) / (torch.sum(noise ** 2) + 1e-8)
-        si_sdr_value = 10 * torch.log10(ratio + 1e-8)
-
-        return float(si_sdr_value.item())
+        return si_sdr(reference.detach().cpu().numpy(), estimation.detach().cpu().numpy())
 
     def calculate_metrics(
         self,
@@ -197,7 +182,7 @@ class AudioMetricsEvaluator:
         generated_audio: Union[np.ndarray, torch.Tensor],
         sr: int = 24000
     ) -> AudioMetricsResult:
-        """Calculate PESQ, STOI and SI-SDR metrics"""
+        """Calculate PESQ, STOI, SI-SDR, SIM-O, and SIM-R metrics"""
         # Convert to numpy if needed
         if isinstance(reference_audio, torch.Tensor):
             reference_audio = reference_audio.detach().cpu().numpy()
@@ -217,15 +202,40 @@ class AudioMetricsEvaluator:
         reference_audio_16k = librosa.resample(reference_audio, orig_sr=sr, target_sr=16000)
         generated_audio_16k = librosa.resample(generated_audio, orig_sr=sr, target_sr=16000)
 
-        # Calculate metrics
+        # Calculate standard metrics
         pesq_score = pesq(16000, reference_audio_16k, generated_audio_16k, 'wb')
         stoi_score = stoi(reference_audio, generated_audio, sr, extended=False)
         sisdr_score = si_sdr(np.array(reference_audio), np.array(generated_audio))
 
+        # Calculate SIM-O (Overall Similarity)
+        mfcc_ref = librosa.feature.mfcc(y=reference_audio, sr=sr, n_mfcc=13)
+        mfcc_gen = librosa.feature.mfcc(y=generated_audio, sr=sr, n_mfcc=13)
+
+        mfcc_ref = (mfcc_ref - np.mean(mfcc_ref)) / (np.std(mfcc_ref) + 1e-8)
+        mfcc_gen = (mfcc_gen - np.mean(mfcc_gen)) / (np.std(mfcc_gen) + 1e-8)
+
+        sim_o = np.mean([
+            np.dot(mfcc_ref[:, i], mfcc_gen[:, i]) /
+            (np.linalg.norm(mfcc_ref[:, i]) * np.linalg.norm(mfcc_gen[:, i]) + 1e-8)
+            for i in range(min(mfcc_ref.shape[1], mfcc_gen.shape[1]))
+        ])
+
+        # Calculate SIM-R (Rhythm Similarity)
+        onset_env_ref = librosa.onset.onset_strength(y=reference_audio, sr=sr)
+        onset_env_gen = librosa.onset.onset_strength(y=generated_audio, sr=sr)
+
+        onset_env_ref = (onset_env_ref - np.mean(onset_env_ref)) / (np.std(onset_env_ref) + 1e-8)
+        onset_env_gen = (onset_env_gen - np.mean(onset_env_gen)) / (np.std(onset_env_gen) + 1e-8)
+
+        sim_r = np.corrcoef(onset_env_ref[:min(len(onset_env_ref), len(onset_env_gen))],
+                           onset_env_gen[:min(len(onset_env_ref), len(onset_env_gen))])[0, 1]
+
         return AudioMetricsResult(
             pesq=pesq_score,
             stoi=stoi_score,
-            si_sdr=sisdr_score
+            si_sdr=sisdr_score,
+            sim_o=float(sim_o),
+            sim_r=float(sim_r)
         )
 
     def evaluate_batch(
@@ -268,6 +278,8 @@ class AudioMetricsEvaluator:
                     'PESQ': metrics.pesq,
                     'STOI': metrics.stoi,
                     'SI-SDR': metrics.si_sdr,
+                    'SIM-O': metrics.sim_o,
+                    'SIM-R': metrics.sim_r,
                     'sample_idx': idx
                 }
 
@@ -336,7 +348,7 @@ class AudioMetricsEvaluator:
             for key, value in meta.items():
                 results_df.loc[results_df['sample_idx'] == idx, key] = value
 
-        avg_metrics = results_df[['PESQ', 'STOI', 'SI-SDR']].mean()
+        avg_metrics = results_df[['PESQ', 'STOI', 'SI-SDR', 'SIM-O', 'SIM-R']].mean()
         print("\nAverage Metrics:")
         for metric, value in avg_metrics.items():
             print(f"{metric}: {value:.4f}")
