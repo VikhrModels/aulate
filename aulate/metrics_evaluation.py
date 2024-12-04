@@ -67,6 +67,8 @@ class AudioMetricsEvaluator:
         # Initialize custom functions if provided
         self._custom_decode_fn = decode_fn
         self._custom_inference_fn = inference_fn
+        self.token = token
+
 
         if not (decode_fn and inference_fn):
             self._initialize_default_implementation(
@@ -74,7 +76,6 @@ class AudioMetricsEvaluator:
                 speechtokenizer_config,
                 speechtokenizer_checkpoint
             )
-        self.token = token
 
         self.gen_audio_dir = "gen_a"
         os.makedirs(self.gen_audio_dir, exist_ok=True)
