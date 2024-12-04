@@ -191,6 +191,7 @@ class AudioMetricsEvaluator:
         if isinstance(generated_audio, torch.Tensor):
             generated_audio = generated_audio.detach().cpu().numpy()
 
+
         reference_audio = reference_audio.astype(np.float32)
         generated_audio = generated_audio.astype(np.float32)
 
@@ -221,7 +222,7 @@ class AudioMetricsEvaluator:
             stoi_score = -1.0
 
         try:
-            sisdr_score = self.si_sdr(torch.tensor(reference_audio), torch.tensor(generated_audio))
+            sisdr_score = si_sdr(reference_audio.astype(np.float64), generated_audio.astype(np.float64))
         except Exception as e:
             print(f"SI-SDR calculation failed: {str(e)}")
             sisdr_score = float('-inf')
@@ -324,7 +325,7 @@ class AudioMetricsEvaluator:
                 if save_audio:
                     audio_filename = f"gen_{idx}.wav"
                     audio_path = os.path.join(self.gen_audio_dir, audio_filename)
-                    sf.write(audio_path, generated_audio.astype(np.float32), sr=24000)
+                    sf.write(audio_path, generated_audio.cpu().numpy().astype(np.float32), sr=24000)
                     result_dict['audio_path'] = audio_path
 
                 results.append(result_dict)
@@ -377,7 +378,7 @@ class AudioMetricsEvaluator:
             samples,
             prompt=prompt,
             batch_metadata={'dataset': 'librispeech', 'subset': subset},
-            save_audio=True
+            save_audio=False
         )
 
         # Add metadata
