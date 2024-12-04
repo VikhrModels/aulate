@@ -43,7 +43,8 @@ class AudioMetricsEvaluator:
         inference_fn: Optional[Callable] = None,
         device: str = "cuda",
         cache_dir: str = ".",
-        results_dir: str = "evaluation_results"
+        results_dir: str = "evaluation_results",
+        token: Optional[str] = None
     ):
         """
         Initialize the AudioMetricsEvaluator.
@@ -67,13 +68,13 @@ class AudioMetricsEvaluator:
         self._custom_decode_fn = decode_fn
         self._custom_inference_fn = inference_fn
 
-        # Initialize default implementation if no custom functions provided
         if not (decode_fn and inference_fn):
             self._initialize_default_implementation(
                 base_model,
                 speechtokenizer_config,
                 speechtokenizer_checkpoint
             )
+        self.token = token
 
         self.gen_audio_dir = "gen_a"
         os.makedirs(self.gen_audio_dir, exist_ok=True)
@@ -86,13 +87,14 @@ class AudioMetricsEvaluator:
         self.start_audio_token = "<|start_of_audio|>"
         self.end_audio_token = "<|end_of_audio|>"
 
-        self.tokenizer = AutoTokenizer.from_pretrained(base_model, cache_dir=self.cache_dir)
+        self.tokenizer = AutoTokenizer.from_pretrained(base_model, cache_dir=self.cache_dir, use_auth_token=self.token)
         self.model = AutoModelForCausalLM.from_pretrained(
             base_model,
             cache_dir=self.cache_dir,
             torch_dtype=torch.float16,
             attn_implementation="sdpa",
-            device_map={"": 0}
+            device_map={"": 0},
+            use_auth_token=self.token
         )
         self.model.config.pad_token_id = self.tokenizer.pad_token_id
         self.model.generation_config.pad_token_id = self.tokenizer.pad_token_id
@@ -114,7 +116,6 @@ class AudioMetricsEvaluator:
         if self._custom_decode_fn:
             return self._custom_decode_fn(tokens)
 
-        # Use default implementation
         quantizer = quantizer or self.quantizer
         n_original_tokens = n_original_tokens or len(self.tokenizer)
         start_audio_token_id = start_audio_token_id or self.tokenizer(self.start_audio_token, return_tensors="pt")["input_ids"][:, -1:].to(self.device)

@@ -19,8 +19,10 @@ A flexible library for evaluating audio generation models using standard metrics
 ## Installation
 
 ```bash
-pip install pesq pystoi torch-mir-eval torchaudio pandas torch transformers soundfile tqdm numpy librosa
+pip install pesq pystoi torch-mir-eval torchaudio pandas torch transformers soundfile tqdm numpy librosa speechtokenizer beartype
 pip install git+https://github.com/descriptinc/audiotools
+git clone https://github.com/jishengpeng/WavTokenizer.git
+mkdir data
 ```
 
 ## Usage
