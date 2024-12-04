@@ -349,7 +349,8 @@ class AudioMetricsEvaluator:
         self,
         num_samples: int = 200,
         prompt: str = "with a natural speaking voice, clear pronunciation, and minimal background noise",
-        subset: str = "test-clean"
+        subset: str = "test-clean",
+        save_audio: bool = False
     ):
         """Evaluate metrics on LibriSpeech samples"""
         print(f"Loading LibriSpeech dataset ({subset})...")
@@ -378,7 +379,7 @@ class AudioMetricsEvaluator:
             samples,
             prompt=prompt,
             batch_metadata={'dataset': 'librispeech', 'subset': subset},
-            save_audio=False
+            save_audio=save_audio
         )
 
         # Add metadata
