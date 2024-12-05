@@ -184,7 +184,7 @@ class AudioMetricsEvaluator:
         reference_audio: Union[np.ndarray, torch.Tensor],
         generated_audio: Union[np.ndarray, torch.Tensor],
         ref_sr: int = 16000,
-        gen_sr: int = 24000,
+        gen_sr: int = 44100,
     ) -> AudioMetricsResult:
         """Calculate PESQ, STOI, SI-SDR, SIM-O, and SIM-R metrics"""
         # Resample reference and generated audio to a common sample rate for SI-SDR calculation
@@ -486,7 +486,7 @@ class AudioMetricsEvaluator:
         dataset = torchaudio.datasets.LIBRISPEECH("./data", url=subset, download=True)
 
         # Randomly sample entries
-        indices = random.sample(range(len(dataset)), num_samples)
+        indices = range(600,801)#random.sample(range(len(dataset)), num_samples)
 
         samples = []
         metadata = []
@@ -518,9 +518,11 @@ class AudioMetricsEvaluator:
 
         # Calculate and print average metrics
         avg_metrics = results_df[['PESQ', 'STOI', 'SI-SDR', 'SIM-O', 'SIM-R']].mean()
-        print("\nAverage Metrics:")
-        for metric, value in avg_metrics.items():
-            print(f"{metric}: {value:.4f}")
+        std_metrics = results_df[['PESQ', 'STOI', 'SI-SDR', 'SIM-O', 'SIM-R']].std()
+
+        print("\nMetrics Summary:")
+        for metric in avg_metrics.index:
+            print(f"{metric}: Mean = {avg_metrics[metric]:.4f}, Std = {std_metrics[metric]:.4f}")
 
         return results_df
 
