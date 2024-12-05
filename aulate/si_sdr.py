@@ -12,6 +12,7 @@ def si_sdr(reference, estimation):
     Returns:
         SI-SDR
 
+
     [1] SDR– Half- Baked or Well Done?
     http://www.merl.com/publications/docs/TR2019-013.pdf
 
