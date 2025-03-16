@@ -50,7 +50,7 @@ results = evaluator.evaluate_on_librispeech(
 # OR run in cli
 
 ```python
-python evaluate_all_checkpoints.py --checkpoint_parent "../results/Qwen2.5-0.5B_tts_wav_1" --speechtokenizer_config "WavTokenizer/configs/wavtokenizer_smalldata_frame40_3s_nq1_code4096_dim512_kmeans200_attn.yaml" --speechtokenizer_checkpoint "audiotokenizer/wavtokenizer_large_unify_600_24k.ckpt" --num_samples 100 --prompt "your prompt here" --output_dir "results"
+python test.py --checkpoint_parent "../results/Qwen2.5-0.5B_tts_wav_1" --speechtokenizer_config "WavTokenizer/configs/wavtokenizer_smalldata_frame40_3s_nq1_code4096_dim512_kmeans200_attn.yaml" --speechtokenizer_checkpoint "audiotokenizer/wavtokenizer_large_unify_600_24k.ckpt" --num_samples 100 --prompt "your prompt here" --output_dir "results"
 ```
 
 ### Using Custom Implementation
