@@ -88,7 +88,7 @@ class AudioTokenizer(ABC):
 
 
 class BigCodecsAudioTokenizer(AudioTokenizer):
-    def __init__(self, checkpoint_path: str = "checkpoints/BigCodecs.pt", **kwargs):
+    def __init__(self, checkpoint_path: str = "checkpoints/bigcodec.pt", **kwargs):
         sr = 16000
         super().__init__(sr, sr, **kwargs)
         ckpt = torch.load(checkpoint_path, map_location="cpu")
@@ -118,6 +118,9 @@ class BigCodecsAudioTokenizer(AudioTokenizer):
 
     def decode(self, tokens):
         # find audio start and end tokens
+        import pdb
+
+        pdb.set_trace()
         start, end = self.get_audio_start_end_tokens(
             tokens,
         )
@@ -172,7 +175,7 @@ class SpeechAudioTokenizer(AudioTokenizer):
         # find audio start and end tokens
         start, end = self.get_audio_start_end_tokens(tokens)
 
-        audio_tokens = tokens[start:end] % self.n_original_tokens
+        audio_tokens = tokens[None, start:end] % self.n_original_tokens
         remainder = audio_tokens.shape[-1] % self.n_channels_tts
 
         if remainder:
