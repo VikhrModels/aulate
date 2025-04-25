@@ -428,7 +428,7 @@ def evaluate_on_librispeech(
 
 if __name__ == "__main__":
     asr_conf = {"type": "speech", "kwargs": {}}
-    tts_conf = {"type": "speech", "kwargs": {}}
+    tts_conf = {"type": "bigcodec", "kwargs": {}}
 
     evaluator = TTSEvaluator(
         base_model="ksych/salt-audiobooks-last",

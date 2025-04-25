@@ -1,6 +1,6 @@
 # Audio Metrics Evaluation Library
 
-A flexible library for evaluating audio generation models using standard metrics (PESQ, STOI, SI-SDR) and similarity metrics (SIM-O, SIM-R). Designed to work with any text-to-speech or audio generation model.
+A flexible library for evaluating audio generation models using standard metrics (PESQ, STOI, SI-SDR), similarity metrics (SIM-O, SIM-R), and ASR metrics (CER, WER). Designed to work with any text-to-speech or speech-to-text model.
 
 ## Features
 
@@ -11,6 +11,9 @@ A flexible library for evaluating audio generation models using standard metrics
 - Calculate similarity metrics:
   - SIM-O (Overall Spectral Similarity)
   - SIM-R (Rhythm Similarity)
+- Calculate ASR metrics: 
+  - CER (Character Error Rate)
+  - WER (Word Error Rate)
 - Support for both default and custom model implementations
 - Batch evaluation capabilities
 - Built-in LibriSpeech evaluation
@@ -19,8 +22,9 @@ A flexible library for evaluating audio generation models using standard metrics
 ## Installation
 
 ```bash
-pip install pesq pystoi torch-mir-eval torchaudio pandas torch transformers soundfile tqdm numpy librosa speechtokenizer beartype
+pip install pesq pystoi pywer torch-mir-eval torchaudio pandas torch transformers soundfile tqdm numpy librosa speechtokenizer beartype
 pip install git+https://github.com/descriptinc/audiotools
+git clone https://github.com/Aria-K-Alethia/BigCodec.git
 git clone https://github.com/jishengpeng/WavTokenizer.git
 mkdir data
 ```
@@ -30,27 +34,23 @@ mkdir data
 ### Basic Usage with Default Implementation
 
 ```python
-from aulate.metrics_evaluation import AudioMetricsEvaluator
+from aulate.metrics_evaluation import TTSEvaluator, evaluate_on_librispeech
 
 # Initialize with default implementation
-evaluator = AudioMetricsEvaluator(
-    base_model='path/to/model',
-    speechtokenizer_config="path/to/config.yaml",
-    speechtokenizer_checkpoint="path/to/checkpoint.ckpt"
+asr_conf = {"type": "speech", "kwargs": {}}
+tts_conf = {"type": "bigcodec", "kwargs": {}}
+
+evaluator = TTSEvaluator(
+    base_model="ksych/salt-audiobooks-last",
+    audio_tokenizer_config={"asr": asr_conf, "tts": tts_conf},
 )
 
 # Evaluate on LibriSpeech
-results = evaluator.evaluate_on_librispeech(
-    num_samples=10,
-    prompt="with a natural speaking voice",
-    save_audio=True
+results = evaluate_on_librispeech(
+  num_samples=10,
+  prompt="with a natural speaking voice",
+  save_audio=True
 )
-```
-
-# OR run in cli
-
-```python
-python test.py --checkpoint_parent "../results/Qwen2.5-0.5B_tts_wav_1" --speechtokenizer_config "WavTokenizer/configs/wavtokenizer_smalldata_frame40_3s_nq1_code4096_dim512_kmeans200_attn.yaml" --speechtokenizer_checkpoint "audiotokenizer/wavtokenizer_large_unify_600_24k.ckpt" --num_samples 100 --prompt "your prompt here" --output_dir "results"
 ```
 
 ### Using Custom Implementation
@@ -65,7 +65,7 @@ def custom_inference(text, prompt):
     pass
 
 # Initialize with custom functions
-evaluator = AudioMetricsEvaluator(
+evaluator = TTSEvaluator(
     decode_fn=custom_decode,
     inference_fn=custom_inference
 )
@@ -75,10 +75,12 @@ evaluator = AudioMetricsEvaluator(
 
 ```python
 # Start with default implementation
-evaluator = AudioMetricsEvaluator(
-    base_model='path/to/model',
-    speechtokenizer_config="path/to/config.yaml",
-    speechtokenizer_checkpoint="path/to/checkpoint.ckpt"
+asr_conf = {"type": "speech", "kwargs": {}}
+tts_conf = {"type": "bigcodec", "kwargs": {}}
+
+evaluator = TTSEvaluator(
+    base_model="ksych/salt-audiobooks-last",
+    audio_tokenizer_config={"asr": asr_conf, "tts": tts_conf},
 )
 
 # Later override with custom implementation
@@ -149,6 +151,8 @@ The evaluation results are returned as a pandas DataFrame with the following col
 - **SI-SDR**: Measures signal distortion. Higher is better (typical range: -∞ to +∞ dB).
 - **SIM-O**: Measures overall spectral similarity using MFCCs. Higher means more similar (range: 0-1).
 - **SIM-R**: Measures rhythm similarity using onset patterns. Higher means more similar rhythm (range: -1 to 1).
+- **CER**: Measures character-level transcription errors. Lower is better (range: 0–1).
+- **WER**: Measures word-level transcription errors. Lower is better (range: 0–1).
 
 Results are automatically saved to CSV files in the specified results directory.
 

@@ -83,6 +83,10 @@ class Evaluator:
             device=self.device,
         )
 
+        self.start_sequence_token_id = start_sequence_token_id
+        self.start_audio_token_id = start_audio_token_id
+        self.end_audio_token_id = end_audio_token_id
+
         if asr_config["type"] == "speech":
             asr = SpeechAudioTokenizer(
                 **asr_config["kwargs"],
