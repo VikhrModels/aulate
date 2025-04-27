@@ -90,7 +90,7 @@ class Evaluator:
         if asr_config["type"] == "speech":
             asr = SpeechAudioTokenizer(
                 **asr_config["kwargs"],
-                n_original_tokens=n_tokens,
+                n_original_tokens=n_tokens + asr_config.get("n_tokens_before", 0),
                 start_audio_token_id=start_audio_token_id,
                 end_audio_token_id=end_audio_token_id,
                 start_sequence_token_id=start_sequence_token_id,
@@ -98,7 +98,7 @@ class Evaluator:
         elif asr_config["type"] == "bigcodec":
             asr = BigCodecsAudioTokenizer(
                 **asr_config["kwargs"],
-                n_original_tokens=n_tokens,
+                n_original_tokens=n_tokens + asr_config.get("n_tokens_before", 0),
                 start_audio_token_id=start_audio_token_id,
                 end_audio_token_id=end_audio_token_id,
                 start_sequence_token_id=start_sequence_token_id,
@@ -106,7 +106,7 @@ class Evaluator:
         elif asr_config["type"] == "wav":
             asr = WavAudioTokenizer(
                 **asr_config["kwargs"],
-                n_original_tokens=n_tokens,
+                n_original_tokens=n_tokens + asr_config.get("n_tokens_before", 0),
                 start_audio_token_id=start_audio_token_id,
                 end_audio_token_id=end_audio_token_id,
                 start_sequence_token_id=start_sequence_token_id,
@@ -117,21 +117,21 @@ class Evaluator:
         if tts_config["type"] == "speech":
             tts = SpeechAudioTokenizer(
                 **tts_config["kwargs"],
-                n_original_tokens=n_tokens,
+                n_original_tokens=n_tokens + tts_config.get("n_tokens_before", 0),
                 start_audio_token_id=start_audio_token_id,
                 end_audio_token_id=end_audio_token_id,
             )
         elif tts_config["type"] == "bigcodec":
             tts = BigCodecsAudioTokenizer(
                 **tts_config["kwargs"],
-                n_original_tokens=n_tokens,
+                n_original_tokens=n_tokens + tts_config.get("n_tokens_before", 0),
                 start_audio_token_id=start_audio_token_id,
                 end_audio_token_id=end_audio_token_id,
             )
         elif tts_config["type"] == "wav":
             tts = WavAudioTokenizer(
                 **tts_config["kwargs"],
-                n_original_tokens=n_tokens,
+                n_original_tokens=n_tokens + tts_config.get("n_tokens_before", 0),
                 start_audio_token_id=start_audio_token_id,
                 end_audio_token_id=end_audio_token_id,
             )

@@ -67,19 +67,32 @@ class AudioTokenizer(ABC):
     def _encode(self, audio):
         pass
 
-    def encode(self, audio):
+    def encode(self, audio, text_tokens=None):
         codes = self._encode(audio)
         raw_tokens = codes + self.n_original_tokens
         audio_tokens = raw_tokens.view(1, -1)
-        tokens = torch.cat(
-            [
-                self.start_sequence_token_id,
-                self.start_audio_token_id,
-                audio_tokens,
-                self.end_audio_token_id,
-            ],
-            dim=1,
-        )
+
+        if text_tokens is not None:
+            tokens = torch.cat(
+                [
+                    self.start_sequence_token_id,
+                    text_tokens,
+                    self.start_audio_token_id,
+                    audio_tokens,
+                    self.end_audio_token_id,
+                ],
+                dim=1,
+            )
+        else:
+            tokens = torch.cat(
+                [
+                    self.start_sequence_token_id,
+                    self.start_audio_token_id,
+                    audio_tokens,
+                    self.end_audio_token_id,
+                ],
+                dim=1,
+            )
         return tokens
 
     @abstractmethod
@@ -254,11 +267,11 @@ class MixedAudioTokenizer(AudioTokenizer):
         self.asr_tokenizer = asr_tokenizer
         self.tts_tokenizer = tts_tokenizer
 
-    def _encode(self, audio_path):
-        return self.asr_tokenizer.encode(audio_path)
+    def _encode(self, audio_path, text_tokens=None):
+        return self.asr_tokenizer.encode(audio_path, text_tokens)
 
-    def encode(self, audio_path):
-        return self._encode(audio_path)
+    def encode(self, audio_path, text_tokens=None):
+        return self._encode(audio_path, text_tokens)
 
     def decode(self, tokens):
         return self.tts_tokenizer.decode(tokens)

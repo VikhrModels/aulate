@@ -30,41 +30,61 @@ class AudioMetricsResult:
 
 
 class ASREvaluator(Evaluator):
-    def decode_asr(self, audio, quantizer=None):
+    def decode_asr(self, audio, text_tokens=None, quantizer=None):
         """Default implementation of decode_tts"""
         if self._custom_decode_fn:
             return self._custom_decode_fn(audio)
 
         quantizer = quantizer or self.quantizer
-        tokens = quantizer.encode(audio)
+        tokens = quantizer.encode(audio, text_tokens)
 
         return tokens
 
     def infer_audio_to_text(
-        self, audio, prompt: str = None, top_k: int = 20, temperature=0.2, **kwargs
+        self,
+        audio,
+        prompt: str = None,
+        do_sample=True,
+        top_k: int = 20,
+        temperature=0.2,
+        top_p=0.99,
+        **kwargs,
     ):
         if self._custom_inference_fn:
             return self._custom_inference_fn(audio, prompt)
 
-        tokens = self.decode_asr(audio)
+        text_tokens = (
+            self.tokenizer(prompt, return_tensors="pt")["input_ids"].to(self.device)
+            if prompt is not None
+            else None
+        )
+        tokens = self.decode_asr(audio, text_tokens)
         attention_mask = torch.ones(tokens.size(), device=self.device)
+
+        # print("Top-p: ", top_p, "Top-k: ", top_k, "Temperature: ", temperature)
 
         output_text_tokens = self.model.generate(
             tokens,
             attention_mask=attention_mask,
-            do_sample=True,
+            do_sample=do_sample,
             temperature=temperature,
             top_k=top_k,
-            top_p=0.99,
-            repetition_penalty=1.1,
+            top_p=top_p,
+            repetition_penalty=1.2,
             eos_token_id=self.end_sequence_token_id,
             **kwargs,
         )
         output_text_tokens = output_text_tokens.cpu()[0]
+        if text_tokens is not None:
+            output_text_tokens = output_text_tokens[len(text_tokens[0]) + 1 :]
+
         decoded_text = self.tokenizer.decode(
             output_text_tokens, skip_special_tokens=True
         )
+        # import pdb; pdb.set_trace()
 
+        # if prompt is not None:
+        #     return decoded_text(prompt)
         return decoded_text
 
     def calculate_metrics(
@@ -72,22 +92,22 @@ class ASREvaluator(Evaluator):
         reference_text: str,
         generated_text: str,
     ) -> Optional[AudioMetricsResult]:
-        """Calculate CER, WER metrics"""
-        reference_text = reference_text.lower()
-        generated_text = generated_text.lower()
+        """Calculate C47306ER, WER metrics"""
+        reference_text = reference_text.lower().strip(".")
+        generated_text = generated_text.lower().strip(".")
 
         # Calculate standard metrics
         try:
             cer_score = cer([reference_text], [generated_text])
         except Exception as e:
             print(f"CER calculation failed: {str(e)}")
-            cer_score = -1.0
+            cer_score = 100.0
 
         try:
             wer_score = wer([reference_text], [generated_text])
         except Exception as e:
             print(f"WER calculation failed: {str(e)}")
-            wer_score = -1.0
+            wer_score = 100.0
 
         return AudioMetricsResult(
             cer=float(cer_score),
@@ -99,6 +119,7 @@ class ASREvaluator(Evaluator):
         samples: list[tuple[str, dict]],
         prompt: Optional[str] = None,
         batch_metadata: Optional[Dict[str, Any]] = None,
+        **kwargs,
     ) -> pd.DataFrame:
         """
         Evaluate metrics on a batch of samples.
@@ -117,10 +138,12 @@ class ASREvaluator(Evaluator):
         ):
             try:
                 text, audio = sample
-                prediction = self.infer_audio_to_text(audio, prompt)
+                prediction = self.infer_audio_to_text(audio, prompt, **kwargs)
                 metrics = self.calculate_metrics(text, prediction)
 
                 print({"CER": metrics.cer, "WER": metrics.wer})
+                print("Prediction: ", prediction)
+                print("Reference: ", text)
                 result_dict = {"CER": metrics.cer, "WER": metrics.wer}
 
                 if batch_metadata:
@@ -152,6 +175,7 @@ def evaluate_on_librispeech(
     prompt: str = "Transcribe the audio. ",
     subset: str = "test-clean",
     random_seed: int = 42,
+    **kwargs,
 ):
     """Evaluate metrics on LibriSpeech samples"""
     print(f"Loading LibriSpeech dataset ({subset})...")
@@ -176,6 +200,7 @@ def evaluate_on_librispeech(
         samples,
         prompt=prompt,
         batch_metadata={"dataset": "librispeech", "subset": subset},
+        **kwargs,
     )
 
     # Add metadata
@@ -197,15 +222,21 @@ def evaluate_on_librispeech(
 
 
 if __name__ == "__main__":
-    asr_conf = {"type": "speech", "kwargs": {}}
+    asr_conf = {"type": "speech", "n_tokens_before": 8192, "kwargs": {}}
     tts_conf = {"type": "bigcodec", "kwargs": {}}
 
     evaluator = ASREvaluator(
-        base_model="ksych/salt-asr-2",
+        base_model="ksych/salt-asr-tts-99k",
         audio_tokenizer_config={"asr": asr_conf, "tts": tts_conf},
     )
 
     results_df = evaluate_on_librispeech(
         evaluator=evaluator,
         num_samples=500,
+        # prompt=None,
+        prompt="Transcribe the audio.",
+        # do_sample=False,
+        # num_beams=5,
+        # early_stopping=True,
+        # length_penalty=1.5,
     )
