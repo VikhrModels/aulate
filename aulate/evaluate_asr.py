@@ -2,6 +2,8 @@ import os
 import random
 import sys
 
+from transformers import AutoModelForCausalLM
+
 sys.path.append("BigCodec")
 sys.path.append("WavTokenizer")
 
@@ -30,6 +32,18 @@ class AudioMetricsResult:
 
 
 class ASREvaluator(Evaluator):
+    def _load_model(self, base_model: str):
+        self.model = AutoModelForCausalLM.from_pretrained(
+            base_model,
+            cache_dir=self.cache_dir,
+            torch_dtype=torch.float16,
+            attn_implementation="sdpa",
+            device_map={"": 0},
+            use_auth_token=self.token,
+        )
+        self.model.config.pad_token_id = self.tokenizer.pad_token_id
+        self.model.generation_config.pad_token_id = self.tokenizer.pad_token_id
+
     def decode_asr(self, audio, text_tokens=None, quantizer=None):
         """Default implementation of decode_tts"""
         if self._custom_decode_fn:
@@ -61,8 +75,6 @@ class ASREvaluator(Evaluator):
         tokens = self.decode_asr(audio, text_tokens)
         attention_mask = torch.ones(tokens.size(), device=self.device)
 
-        # print("Top-p: ", top_p, "Top-k: ", top_k, "Temperature: ", temperature)
-
         output_text_tokens = self.model.generate(
             tokens,
             attention_mask=attention_mask,
@@ -74,6 +86,7 @@ class ASREvaluator(Evaluator):
             eos_token_id=self.end_sequence_token_id,
             **kwargs,
         )
+
         output_text_tokens = output_text_tokens.cpu()[0]
         if text_tokens is not None:
             output_text_tokens = output_text_tokens[len(text_tokens[0]) + 1 :]
@@ -81,10 +94,6 @@ class ASREvaluator(Evaluator):
         decoded_text = self.tokenizer.decode(
             output_text_tokens, skip_special_tokens=True
         )
-        # import pdb; pdb.set_trace()
-
-        # if prompt is not None:
-        #     return decoded_text(prompt)
         return decoded_text
 
     def calculate_metrics(
@@ -226,7 +235,7 @@ if __name__ == "__main__":
     tts_conf = {"type": "bigcodec", "kwargs": {}}
 
     evaluator = ASREvaluator(
-        base_model="ksych/salt-asr-tts-99k",
+        base_model="ksych/salt-asr-tts-213k",
         audio_tokenizer_config={"asr": asr_conf, "tts": tts_conf},
     )
 
@@ -234,9 +243,9 @@ if __name__ == "__main__":
         evaluator=evaluator,
         num_samples=500,
         # prompt=None,
-        prompt="Transcribe the audio.",
-        # do_sample=False,
-        # num_beams=5,
-        # early_stopping=True,
-        # length_penalty=1.5,
+        # prompt="Transcribe the audio.",
+        do_sample=False,
+        num_beams=5,
+        early_stopping=True,
+        length_penalty=1.5,
     )

@@ -2,7 +2,8 @@ import os
 import random
 import sys
 
-from aulate.base import Evaluator
+from transformers import AutoModelForCausalLM
+from vllm import SamplingParams, LLM
 
 sys.path.append("BigCodec")
 sys.path.append("WavTokenizer")
@@ -29,6 +30,8 @@ from pesq import pesq
 from pystoi import stoi
 from si_sdr import si_sdr
 
+from base import Evaluator
+
 
 @dataclass
 class AudioMetricsResult:
@@ -48,6 +51,21 @@ class TTSEvaluator(Evaluator):
         self.gen_audio_dir = "gen_a"
         os.makedirs(self.gen_audio_dir, exist_ok=True)
 
+    def _load_model(self, base_model: str):
+        if self.use_vllm:
+            self.model = LLM(base_model, gpu_memory_utilization=0.5)
+        else:
+            self.model = AutoModelForCausalLM.from_pretrained(
+                base_model,
+                cache_dir=self.cache_dir,
+                torch_dtype=torch.float16,
+                attn_implementation="sdpa",
+                device_map={"": 0},
+                use_auth_token=self.token,
+            )
+            self.model.config.pad_token_id = self.tokenizer.pad_token_id
+            self.model.generation_config.pad_token_id = self.tokenizer.pad_token_id
+
     def decode_tts(self, tokens, quantizer=None):
         """Default implementation of decode_tts"""
         if self._custom_decode_fn:
@@ -62,6 +80,7 @@ class TTSEvaluator(Evaluator):
         prompt: str,
         top_k: int = 100,
         temperature: float = 1.0,
+        do_sample: bool = True,
         **kwargs,
     ):
         """Default implementation of text-to-audio inference"""
@@ -72,32 +91,49 @@ class TTSEvaluator(Evaluator):
         max_seq_length = 1024
         formatted_text = text.lower()
 
-        text_tokenized = self.tokenizer(formatted_text, return_tensors="pt")
-        text_input_tokens = text_tokenized["input_ids"].to(self.device)
+        if self.use_vllm:
+            sampling_params = SamplingParams(
+                max_tokens=max_seq_length,
+                top_k=top_k,
+                temperature=temperature if do_sample else 0.0,
+                stop_token_ids=[self.end_audio_token_id.cpu().item()],
+            )
+            output_audio_tokens = (
+                self.model.generate(
+                    formatted_text,
+                    sampling_params=sampling_params,
+                )[0]
+                .outputs[0]
+                .token_ids
+            )
+            output_audio_tokens = torch.tensor(output_audio_tokens, device=self.device)
+        else:
+            text_tokenized = self.tokenizer(formatted_text, return_tensors="pt")
+            text_input_tokens = text_tokenized["input_ids"].to(self.device)
 
-        text_tokens = torch.cat(
-            [
-                self.start_sequence_token_id,
-                text_input_tokens,
-                self.start_audio_token_id,
-            ],
-            dim=1,
-        )
-        attention_mask = torch.ones(text_tokens.size(), device=self.device)
+            text_tokens = torch.cat(
+                [
+                    self.start_sequence_token_id,
+                    text_input_tokens,
+                    self.start_audio_token_id,
+                ],
+                dim=1,
+            )
+            attention_mask = torch.ones(text_tokens.size(), device=self.device)
 
-        output_audio_tokens = self.model.generate(
-            text_tokens,
-            attention_mask=attention_mask,
-            max_new_tokens=max_seq_length,
-            top_k=top_k,
-            do_sample=True,
-            temperature=temperature,
-            eos_token_id=self.end_audio_token_id,
-            # repetition_penalty=1.1,
-            **kwargs,
-        )
+            output_audio_tokens = self.model.generate(
+                text_tokens,
+                attention_mask=attention_mask,
+                max_new_tokens=max_seq_length,
+                top_k=top_k,
+                do_sample=True,
+                temperature=temperature,
+                eos_token_id=self.end_audio_token_id,
+                # repetition_penalty=1.1,
+                **kwargs,
+            )[0]
 
-        return self.decode_tts(output_audio_tokens[0], self.quantizer)
+        return self.decode_tts(output_audio_tokens, self.quantizer)
 
     def si_sdr(self, reference: torch.Tensor, estimation: torch.Tensor) -> float:
         return si_sdr(

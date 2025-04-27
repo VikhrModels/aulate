@@ -10,7 +10,7 @@ from typing import Dict, Any, Callable, Optional
 import pandas as pd
 
 import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer
 
 from tokenizer import (
     SpeechAudioTokenizer,
@@ -31,6 +31,7 @@ class Evaluator:
         cache_dir: str = ".",
         results_dir: str = "evaluation_results",
         token: Optional[str] = None,
+        use_vllm: bool = True,
     ):
         """
         Initialize the AudioMetricsEvaluator.
@@ -53,6 +54,8 @@ class Evaluator:
         self._custom_decode_fn = decode_fn
         self._custom_inference_fn = inference_fn
         self.token = token
+
+        self.use_vllm = use_vllm
 
         self.start_audio_token = "<|start_of_audio|>"
         self.end_audio_token = "<|end_of_audio|>"
@@ -153,16 +156,8 @@ class Evaluator:
         self.tokenizer = AutoTokenizer.from_pretrained(
             base_model, cache_dir=self.cache_dir, use_auth_token=self.token
         )
-        self.model = AutoModelForCausalLM.from_pretrained(
-            base_model,
-            cache_dir=self.cache_dir,
-            torch_dtype=torch.float16,
-            attn_implementation="sdpa",
-            device_map={"": 0},
-            use_auth_token=self.token,
-        )
-        self.model.config.pad_token_id = self.tokenizer.pad_token_id
-        self.model.generation_config.pad_token_id = self.tokenizer.pad_token_id
+
+        self._load_model(base_model)
 
         self.end_sequence_token_id = self.tokenizer.convert_tokens_to_ids(
             self.end_sequence_token
@@ -177,6 +172,10 @@ class Evaluator:
     def set_inference_fn(self, inference_fn: Callable) -> None:
         """Set a custom function to generate audio from text."""
         self._custom_inference_fn = inference_fn
+
+    @abstractmethod
+    def _load_model(self, base_model: str):
+        pass
 
     @abstractmethod
     def calculate_metrics(
