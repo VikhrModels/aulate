@@ -65,7 +65,7 @@ class ASREvaluator(Evaluator):
         **kwargs,
     ):
         if self._custom_inference_fn:
-            return self._custom_inference_fn(audio, prompt)
+            return self._custom_inference_fn(audio, prompt=prompt)
 
         text_tokens = (
             self.tokenizer(prompt, return_tensors="pt")["input_ids"].to(self.device)
@@ -147,7 +147,7 @@ class ASREvaluator(Evaluator):
         ):
             try:
                 text, audio = sample
-                prediction = self.infer_audio_to_text(audio, prompt, **kwargs)
+                prediction = self.infer_audio_to_text(audio, prompt=prompt, **kwargs)
                 metrics = self.calculate_metrics(text, prediction)
 
                 print({"CER": metrics.cer, "WER": metrics.wer})
