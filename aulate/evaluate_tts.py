@@ -21,6 +21,7 @@ import torch
 import torchaudio
 
 from tqdm import tqdm
+from datasets import load_dataset
 
 import librosa
 from audiotools import AudioSignal
@@ -72,14 +73,14 @@ class TTSEvaluator(Evaluator):
             return self._custom_decode_fn(tokens)
 
         quantizer = quantizer or self.quantizer
-        return quantizer.decode(tokens).squeeze(0)
+        return quantizer.decode(tokens)
 
     def infer_text_to_audio(
         self,
         text: str,
         prompt: str,
-        top_k: int = 100,
-        temperature: float = 1.0,
+        top_k: int = 200,
+        temperature: float = 1.2,
         do_sample: bool = True,
         **kwargs,
     ):
@@ -91,6 +92,18 @@ class TTSEvaluator(Evaluator):
         max_seq_length = 1024
         formatted_text = text.lower()
 
+        text_tokenized = self.tokenizer(formatted_text, return_tensors="pt")
+        text_input_tokens = text_tokenized["input_ids"].to(self.device)
+
+        text_tokens = torch.cat(
+            [
+                self.start_sequence_token_id,
+                text_input_tokens,
+                self.start_audio_token_id,
+            ],
+            dim=1,
+        )
+
         if self.use_vllm:
             sampling_params = SamplingParams(
                 max_tokens=max_seq_length,
@@ -98,9 +111,11 @@ class TTSEvaluator(Evaluator):
                 temperature=temperature if do_sample else 0.0,
                 stop_token_ids=[self.end_audio_token_id.cpu().item()],
             )
+            # import pdb; pdb.set_trace()
+            # print(self.tokenizer.decode(text_tokens)[0])
             output_audio_tokens = (
                 self.model.generate(
-                    formatted_text,
+                    self.tokenizer.decode(text_tokens[0]),
                     sampling_params=sampling_params,
                 )[0]
                 .outputs[0]
@@ -108,17 +123,6 @@ class TTSEvaluator(Evaluator):
             )
             output_audio_tokens = torch.tensor(output_audio_tokens, device=self.device)
         else:
-            text_tokenized = self.tokenizer(formatted_text, return_tensors="pt")
-            text_input_tokens = text_tokenized["input_ids"].to(self.device)
-
-            text_tokens = torch.cat(
-                [
-                    self.start_sequence_token_id,
-                    text_input_tokens,
-                    self.start_audio_token_id,
-                ],
-                dim=1,
-            )
             attention_mask = torch.ones(text_tokens.size(), device=self.device)
 
             output_audio_tokens = self.model.generate(
@@ -329,9 +333,9 @@ class TTSEvaluator(Evaluator):
         ):
             try:
                 if isinstance(sample, tuple):
-                    text, reference_audio = sample
+                    text, reference_audio, ref_sr = sample
                     print(text, prompt)
-                    generated_audio = (
+                    generated_audio, sr = (
                         self.infer_text_to_audio(text, prompt)
                         if prompt
                         else self.infer_text_to_audio(text, "")
@@ -345,7 +349,9 @@ class TTSEvaluator(Evaluator):
                         generated_audio = generated_audio.audio_data.squeeze()
                     text = None
 
-                metrics = self.calculate_metrics(reference_audio, generated_audio)
+                metrics = self.calculate_metrics(
+                    reference_audio, generated_audio, ref_sr=ref_sr, gen_sr=sr
+                )
                 print(
                     {
                         "PESQ": metrics.pesq,
@@ -375,8 +381,8 @@ class TTSEvaluator(Evaluator):
                     audio_filename_ = f"orig_{idx}.wav"
                     audio_path = os.path.join(self.gen_audio_dir, audio_filename)
                     audio_path_ = os.path.join(self.gen_audio_dir, audio_filename_)
-                    sf.write(audio_path, generated_audio.astype(np.float32), 44100)
-                    sf.write(audio_path_, reference_audio.astype(np.float32), 16000)
+                    sf.write(audio_path, generated_audio.astype(np.float32), sr)
+                    sf.write(audio_path_, reference_audio.astype(np.float32), ref_sr)
                     result_dict["audio_path"] = audio_path
 
                 results.append(result_dict)
@@ -462,13 +468,71 @@ def evaluate_on_librispeech(
     return results_df
 
 
+def evaluate_on_mozilla(
+    evaluator: TTSEvaluator,
+    num_samples: int = 200,
+    prompt: Optional[
+        str
+    ] = "with a natural speaking voice, clear pronunciation, and minimal background noise",
+    subset: str = "ru",
+    save_audio=True,
+    random_seed: int = 42,
+):
+    """Evaluate metrics on LibriSpeech samples"""
+    print(f"Loading ru mozilla dataset ({subset})...")
+    dataset = load_dataset("mozilla-foundation/common_voice_12_0", subset)["test"]
+
+    # Randomly sample entries
+    all_indices = list(range(len(dataset)))
+    random.seed(random_seed)
+    random.shuffle(all_indices)
+    indices = all_indices[:num_samples]
+
+    samples = []
+    metadata = []
+    print("Preparing samples...")
+    for idx in tqdm(indices, desc="Loading audio files"):
+        row = dataset[idx]
+        reference_audio, sample_rate, text = (
+            row["audio"]["array"],
+            row["audio"]["sampling_rate"],
+            row["sentence"],
+        )
+        samples.append((text, reference_audio, sample_rate))
+
+    print("Running evaluation...")
+    results_df = evaluator.evaluate_batch(
+        samples,
+        prompt=prompt,
+        batch_metadata={"dataset": "mozilla", "subset": subset},
+        save_audio=save_audio,
+    )
+
+    # Add metadata
+    for idx, meta in enumerate(metadata):
+        for key, value in meta.items():
+            results_df.loc[results_df["sample_idx"] == idx, key] = value
+
+    # Calculate and print average metrics
+    avg_metrics = results_df[["PESQ", "STOI", "SI-SDR", "SIM-O", "SIM-R"]].mean()
+    std_metrics = results_df[["PESQ", "STOI", "SI-SDR", "SIM-O", "SIM-R"]].std()
+
+    print("\nMetrics Summary:")
+    for metric in avg_metrics.index:
+        print(
+            f"{metric}: Mean = {avg_metrics[metric]:.4f}, Std = {std_metrics[metric]:.4f}"
+        )
+
+    return results_df
+
+
 if __name__ == "__main__":
     asr_conf = {"type": "speech", "kwargs": {}}
     tts_conf = {"type": "bigcodec", "kwargs": {}}
 
     evaluator = TTSEvaluator(
-        base_model="ksych/salt-audiobooks-last",
+        base_model="ksych/salt-asr-tts-255k",
         audio_tokenizer_config={"asr": asr_conf, "tts": tts_conf},
     )
 
-    results_df = evaluate_on_librispeech(evaluator, num_samples=50, prompt=None)
+    results_df = evaluate_on_mozilla(evaluator, num_samples=50, prompt=None)

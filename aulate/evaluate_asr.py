@@ -180,7 +180,7 @@ class ASREvaluator(Evaluator):
 
 def evaluate_on_librispeech(
     evaluator: ASREvaluator,
-    num_samples: int = 200,
+    num_samples: Optional[int] = None,
     prompt: str = "Transcribe the audio. ",
     subset: str = "test-clean",
     random_seed: int = 42,
@@ -189,6 +189,9 @@ def evaluate_on_librispeech(
     """Evaluate metrics on LibriSpeech samples"""
     print(f"Loading LibriSpeech dataset ({subset})...")
     dataset = torchaudio.datasets.LIBRISPEECH("./data", url=subset, download=True)
+
+    if num_samples is None:
+        num_samples = len(dataset)
 
     # Randomly sample entries
     all_indices = list(range(len(dataset)))
@@ -235,17 +238,17 @@ if __name__ == "__main__":
     tts_conf = {"type": "bigcodec", "kwargs": {}}
 
     evaluator = ASREvaluator(
-        base_model="ksych/salt-asr-tts-213k",
+        base_model="ksych/salt-asr-tts-402k",
         audio_tokenizer_config={"asr": asr_conf, "tts": tts_conf},
     )
 
     results_df = evaluate_on_librispeech(
         evaluator=evaluator,
-        num_samples=500,
+        # num_samples=500,
         # prompt=None,
         # prompt="Transcribe the audio.",
-        do_sample=False,
-        num_beams=5,
-        early_stopping=True,
-        length_penalty=1.5,
+        # do_sample=False,
+        # num_beams=5,
+        # early_stopping=True,
+        # length_penalty=1.5,
     )
