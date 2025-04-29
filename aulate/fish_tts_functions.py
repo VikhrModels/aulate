@@ -1,11 +1,14 @@
-import subprocess
 import os
-import numpy as np
-import torch
-from typing import Optional, Union, Tuple, Dict
+import subprocess
 import tempfile
 import hashlib
+
+from typing import Optional, Tuple, Dict
+
+import numpy as np
 import soundfile as sf
+
+from evaluate_tts import TTSEvaluator, evaluate_on_mozilla
 
 
 class FishTTSWrapper:
@@ -15,7 +18,7 @@ class FishTTSWrapper:
         device: str = "cuda:0",
         use_compile: bool = True,
         use_half: bool = False,
-        cache_dir: Optional[str] = None
+        cache_dir: Optional[str] = None,
     ):
         """Initialize Fish TTS wrapper.
 
@@ -32,7 +35,9 @@ class FishTTSWrapper:
         self.use_half = use_half
 
         # Paths to specific model files
-        self.vqgan_path = os.path.join(checkpoint_path, "firefly-gan-vq-fsq-8x1024-21hz-generator.pth")
+        self.vqgan_path = os.path.join(
+            checkpoint_path, "firefly-gan-vq-fsq-8x1024-21hz-generator.pth"
+        )
 
         # Set up caching
         self.cache_dir = cache_dir or tempfile.mkdtemp()
@@ -44,12 +49,7 @@ class FishTTSWrapper:
     def _run_command(self, command: list) -> subprocess.CompletedProcess:
         """Run a command and handle errors."""
         try:
-            result = subprocess.run(
-                command,
-                check=True,
-                capture_output=True,
-                text=True
-            )
+            result = subprocess.run(command, check=True, capture_output=True, text=True)
             return result
         except subprocess.CalledProcessError as e:
             print(f"Command failed with error: {e.stderr}")
@@ -57,7 +57,7 @@ class FishTTSWrapper:
 
     def _get_audio_hash(self, audio_path: str) -> str:
         """Generate a hash for the audio file."""
-        with open(audio_path, 'rb') as f:
+        with open(audio_path, "rb") as f:
             return hashlib.md5(f.read()).hexdigest()
 
     def generate_voice_prompt(self, reference_audio: str) -> str:
@@ -80,10 +80,14 @@ class FishTTSWrapper:
         # Only generate if not already exists
         if not os.path.exists(prompt_path):
             command = [
-                "/workspace/.venv/bin/python", "tools/vqgan/inference.py",
-                "-i", reference_audio,
-                "--checkpoint-path", self.vqgan_path,
-                "-o", prompt_path  # Specify output path
+                "/workspace/.venv/bin/python",
+                "tools/vqgan/inference.py",
+                "-i",
+                reference_audio,
+                "--checkpoint-path",
+                self.vqgan_path,
+                "-o",
+                prompt_path,  # Specify output path
             ]
             self._run_command(command)
 
@@ -94,9 +98,9 @@ class FishTTSWrapper:
     def generate_semantic_tokens(
         self,
         text: str,
-        reference_text: str,
+        reference_text: Optional[str] = None,
         prompt_tokens_path: Optional[str] = None,
-        num_samples: int = 1
+        num_samples: int = 1,
     ) -> str:
         """Generate semantic tokens from text.
 
@@ -118,11 +122,16 @@ class FishTTSWrapper:
 
         if not os.path.exists(output_path):
             command = [
-                "/workspace/.venv/bin/python", "tools/llama/generate.py",
-                "--text", text,
-                "--prompt-text", reference_text,
-                "--checkpoint-path", self.checkpoint_path,
-                "--num-samples", "1",
+                "python",
+                "fish-speech/fish_speech/models/text2semantic/inference.py",
+                "--text",
+                text,
+                "--prompt-text",
+                reference_text,
+                "--checkpoint-path",
+                self.checkpoint_path,
+                "--num-samples",
+                "1",
                 # "--output-path", output_path
             ]
 
@@ -149,15 +158,19 @@ class FishTTSWrapper:
             Path to generated audio file
         """
         # Create unique output path
-        tokens_hash = self._get_audio_hash('codes_0.npy')
+        tokens_hash = self._get_audio_hash("codes_0.npy")
         output_path = os.path.join(self.cache_dir, f"audio_{tokens_hash}.wav")
 
         if not os.path.exists(output_path):
             command = [
-                "/workspace/.venv/bin/python", "tools/vqgan/inference.py",
-                "-i", '/workspace/aulate/codes_0.npy',
-                "--checkpoint-path", self.vqgan_path,
-                "-o", output_path
+                "/workspace/.venv/bin/python",
+                "tools/vqgan/inference.py",
+                "-i",
+                "/workspace/aulate/codes_0.npy",
+                "--checkpoint-path",
+                self.vqgan_path,
+                "-o",
+                output_path,
             ]
             self._run_command(command)
 
@@ -166,7 +179,7 @@ class FishTTSWrapper:
     def infer_text_to_audio(
         self,
         text: str,
-        reference_text: str = "THAT WILL BE SAFEST NO NO NEVER",
+        reference_text: Optional[str] = None,
         reference_audio: Optional[str] = None,
     ) -> Tuple[int, np.ndarray]:
         """Generate audio from text.
@@ -180,15 +193,13 @@ class FishTTSWrapper:
             Tuple of (sampling_rate, audio_waveform)
         """
         # Generate voice prompt if reference audio provided
-        prompt_path = "prompt.npy"
-        # if reference_audio:
-        #     prompt_path = self.generate_voice_prompt(reference_audio)
+        prompt_path = None
+        if reference_audio:
+            prompt_path = self.generate_voice_prompt(reference_audio)
 
         # Generate semantic tokens
         semantic_tokens_path = self.generate_semantic_tokens(
-            text,
-            reference_text,
-            prompt_path
+            text, reference_text, prompt_path
         )
 
         # Generate audio
@@ -202,9 +213,18 @@ class FishTTSWrapper:
         """Cleanup temporary files."""
         if os.path.exists(self.cache_dir):
             import shutil
+
             shutil.rmtree(self.cache_dir)
 
     def __del__(self):
         """Cleanup on object destruction if cache_dir was temporary."""
         if self.cache_dir.startswith(tempfile.gettempdir()):
             self.cleanup()
+
+
+if __name__ == "__main__":
+    wrapper = FishTTSWrapper()
+
+    evaluator = TTSEvaluator(inference_fn=wrapper.infer_text_to_audio)
+
+    results_df = evaluate_on_mozilla(evaluator, num_samples=50, prompt=None)
