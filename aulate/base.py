@@ -1,12 +1,14 @@
 import os
 import sys
-from abc import abstractmethod
+import random
 
 sys.path.append("BigCodec")
 sys.path.append("WavTokenizer")
 
+from abc import abstractmethod
 from typing import Dict, Any, Callable, Optional
 
+import numpy as np
 import pandas as pd
 
 import torch
@@ -18,6 +20,18 @@ from tokenizer import (
     MixedAudioTokenizer,
     WavAudioTokenizer,
 )
+
+
+def set_seed(seed: int = 42):
+    """Fix all random seeds for reproducibility"""
+    random.seed(seed)  # Python random module
+    np.random.seed(seed)  # Numpy
+    torch.manual_seed(seed)  # PyTorch CPU
+    torch.cuda.manual_seed(seed)  # PyTorch GPU
+    torch.cuda.manual_seed_all(seed)  # For multi-GPU setups
+    torch.backends.cudnn.deterministic = True  # CuDNN determinism
+    torch.backends.cudnn.benchmark = False  # Disables CuDNN benchmarking
+    os.environ["PYTHONHASHSEED"] = str(seed)  # Python hash seed
 
 
 class Evaluator:

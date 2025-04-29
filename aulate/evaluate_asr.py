@@ -21,7 +21,7 @@ from tqdm import tqdm
 
 from pywer import wer, cer
 
-from base import Evaluator
+from base import Evaluator, set_seed
 
 
 @dataclass
@@ -203,6 +203,8 @@ def evaluate_on_librispeech(
     **kwargs,
 ):
     """Evaluate metrics on LibriSpeech samples"""
+    set_seed(random_seed)
+
     print(f"Loading LibriSpeech dataset ({subset})...")
     dataset = torchaudio.datasets.LIBRISPEECH("./data", url=subset, download=True)
 
@@ -214,7 +216,6 @@ def evaluate_on_librispeech(
 
     # Randomly sample entries
     all_indices = list(range(len(dataset)))
-    random.seed(random_seed)
     random.shuffle(all_indices)
     indices = all_indices[:num_samples]
 
