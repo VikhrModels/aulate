@@ -1,6 +1,7 @@
 import os
 import random
 import sys
+import time
 
 from transformers import AutoModelForCausalLM
 
@@ -101,7 +102,7 @@ class ASREvaluator(Evaluator):
         reference_text: str,
         generated_text: str,
     ) -> Optional[AudioMetricsResult]:
-        """Calculate C47306ER, WER metrics"""
+        """Calculate CER, WER metrics"""
         reference_text = reference_text.lower().strip(".")
         generated_text = generated_text.lower().strip(".")
 
@@ -147,13 +148,27 @@ class ASREvaluator(Evaluator):
         ):
             try:
                 text, audio = sample
+
+                start = time.perf_counter()
                 prediction = self.infer_audio_to_text(audio, prompt=prompt, **kwargs)
+                end = time.perf_counter()
+
                 metrics = self.calculate_metrics(text, prediction)
 
-                print({"CER": metrics.cer, "WER": metrics.wer})
+                print(
+                    {
+                        "CER": metrics.cer,
+                        "WER": metrics.wer,
+                        "prediction_time": end - start,
+                    }
+                )
                 print("Prediction: ", prediction)
                 print("Reference: ", text)
-                result_dict = {"CER": metrics.cer, "WER": metrics.wer}
+                result_dict = {
+                    "CER": metrics.cer,
+                    "WER": metrics.wer,
+                    "characters_per_second": len(prediction) / (end - start),
+                }
 
                 if batch_metadata:
                     result_dict.update(batch_metadata)
@@ -183,6 +198,7 @@ def evaluate_on_librispeech(
     num_samples: Optional[int] = None,
     prompt: str = "Transcribe the audio. ",
     subset: str = "test-clean",
+    save_audio: bool = False,
     random_seed: int = 42,
     **kwargs,
 ):
@@ -192,6 +208,9 @@ def evaluate_on_librispeech(
 
     if num_samples is None:
         num_samples = len(dataset)
+
+    if save_audio:
+        os.makedirs("tmp", exist_ok=True)
 
     # Randomly sample entries
     all_indices = list(range(len(dataset)))
@@ -205,7 +224,23 @@ def evaluate_on_librispeech(
     for idx in tqdm(indices, desc="Loading audio files"):
         waveform, sample_rate, text, _, _, _ = dataset[torch.tensor(idx).long()]
         reference_audio = waveform.numpy().squeeze()
-        samples.append((text, {"array": reference_audio, "sampling_rate": sample_rate}))
+
+        if save_audio:
+            torchaudio.save(f"tmp/{idx}.wav", waveform, sample_rate)
+            samples.append(
+                (
+                    text,
+                    {
+                        "array": reference_audio,
+                        "sampling_rate": sample_rate,
+                        "audio_path": f"tmp/{idx}",
+                    },
+                )
+            )
+        else:
+            samples.append(
+                (text, {"array": reference_audio, "sampling_rate": sample_rate})
+            )
 
     print("Running evaluation...")
     results_df = evaluator.evaluate_batch(
@@ -221,14 +256,17 @@ def evaluate_on_librispeech(
             results_df.loc[results_df["sample_idx"] == idx, key] = value
 
     # Calculate and print average metrics
-    avg_metrics = results_df[["CER", "WER"]].mean()
-    std_metrics = results_df[["CER", "WER"]].std()
+    avg_metrics = results_df[["CER", "WER", "characters_per_second"]].mean()
+    std_metrics = results_df[["CER", "WER", "characters_per_second"]].std()
 
     print("\nMetrics Summary:")
     for metric in avg_metrics.index:
         print(
             f"{metric}: Mean = {avg_metrics[metric]:.4f}, Std = {std_metrics[metric]:.4f}"
         )
+
+    if save_audio:
+        os.remove("tmp")
 
     return results_df
 
@@ -238,7 +276,7 @@ if __name__ == "__main__":
     tts_conf = {"type": "bigcodec", "kwargs": {}}
 
     evaluator = ASREvaluator(
-        base_model="ksych/salt-asr-tts-402k",
+        base_model="ksych/salt-asr-tts-556k",
         audio_tokenizer_config={"asr": asr_conf, "tts": tts_conf},
     )
 
