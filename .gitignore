@@ -2,3 +2,4 @@ hw.sol
 inference_wavtokenizer
 .zvuk/**
 inference_wavtokenizer.py
+__pycache__
