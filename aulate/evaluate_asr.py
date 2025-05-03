@@ -2,6 +2,7 @@ import os
 import random
 import sys
 import time
+import argparse
 
 from transformers import AutoModelForCausalLM
 
@@ -164,6 +165,7 @@ class ASREvaluator(Evaluator):
                 )
                 print("Prediction: ", prediction)
                 print("Reference: ", text)
+
                 result_dict = {
                     "CER": metrics.cer,
                     "WER": metrics.wer,
@@ -234,7 +236,7 @@ def evaluate_on_librispeech(
                     {
                         "array": reference_audio,
                         "sampling_rate": sample_rate,
-                        "audio_path": f"tmp/{idx}",
+                        "audio_path": f"tmp/{idx}.wav",
                     },
                 )
             )
@@ -273,17 +275,32 @@ def evaluate_on_librispeech(
 
 
 if __name__ == "__main__":
-    asr_conf = {"type": "speech", "n_tokens_before": 8192, "kwargs": {}}
+    parser = argparse.ArgumentParser(description="Evaluate ASR model on LibriSpeech")
+    parser.add_argument("--model", type=str, help="Model name")
+    parser.add_argument(
+        "--num_samples", type=int, default=None, help="Number of samples to evaluate on"
+    )
+    parser.add_argument(
+        "--prompt", type=str, default=None, help="Prompt to prepend to transcription"
+    )
+    parser.add_argument(
+        "--random_seed", type=int, default=42, help="Random seed to use."
+    )
+
+    args = parser.parse_args()
+
+    asr_conf = {"type": "speech", "n_tokens_before": 0, "kwargs": {}}
     tts_conf = {"type": "bigcodec", "kwargs": {}}
 
     evaluator = ASREvaluator(
-        base_model="ksych/salt-asr-tts-556k",
+        base_model=args.model,
         audio_tokenizer_config={"asr": asr_conf, "tts": tts_conf},
     )
 
     results_df = evaluate_on_librispeech(
         evaluator=evaluator,
-        # num_samples=500,
+        num_samples=args.num_samples,
+        random_seed=args.random_seed,
         # prompt=None,
         # prompt="Transcribe the audio.",
         # do_sample=False,

@@ -31,7 +31,7 @@ from pesq import pesq
 from pystoi import stoi
 from si_sdr import si_sdr
 
-from base import Evaluator
+from base import Evaluator, set_seed
 
 
 @dataclass
@@ -416,6 +416,7 @@ def evaluate_on_librispeech(
     random_seed: int = 42,
 ):
     """Evaluate metrics on LibriSpeech samples"""
+    set_seed(random_seed)
     print(f"Loading LibriSpeech dataset ({subset})...")
     dataset = torchaudio.datasets.LIBRISPEECH("./data", url=subset, download=True)
 
@@ -479,6 +480,7 @@ def evaluate_on_mozilla(
     random_seed: int = 42,
 ):
     """Evaluate metrics on LibriSpeech samples"""
+    set_seed(random_seed)
     print(f"Loading ru mozilla dataset ({subset})...")
     dataset = load_dataset("mozilla-foundation/common_voice_12_0", subset)["test"]
 
@@ -531,8 +533,10 @@ if __name__ == "__main__":
     tts_conf = {"type": "bigcodec", "kwargs": {}}
 
     evaluator = TTSEvaluator(
-        base_model="ksych/salt-asr-tts-255k",
+        base_model="ksych/salt-audiobooks-last",
         audio_tokenizer_config={"asr": asr_conf, "tts": tts_conf},
     )
 
-    results_df = evaluate_on_mozilla(evaluator, num_samples=50, prompt=None)
+    results_df = evaluate_on_mozilla(
+        evaluator, num_samples=100, prompt=None, random_seed=43
+    )

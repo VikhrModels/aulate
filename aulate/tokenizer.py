@@ -131,9 +131,6 @@ class BigCodecsAudioTokenizer(AudioTokenizer):
 
     def decode(self, tokens):
         # find audio start and end tokens
-        import pdb
-
-        pdb.set_trace()
         start, end = self.get_audio_start_end_tokens(
             tokens,
         )
@@ -143,7 +140,7 @@ class BigCodecsAudioTokenizer(AudioTokenizer):
         emb = self.decoder.vq2emb(audio_tokens).transpose(1, 2)
         audio = self.decoder(emb, vq=False).squeeze().detach().cpu().numpy()
 
-        return AudioSignal(audio, self.sampling_rate_tts)
+        return audio, self.sampling_rate_tts
 
 
 class SpeechAudioTokenizer(AudioTokenizer):
@@ -203,7 +200,7 @@ class SpeechAudioTokenizer(AudioTokenizer):
         codes = transposed.view(self.n_channels_tts, 1, -1).to(self.device)
 
         audio = self.quantizer.decode(codes).squeeze(0)
-        return AudioSignal(audio.detach().cpu().numpy(), self.sampling_rate_tts)
+        return audio.detach().cpu().numpy(), self.sampling_rate_tts
 
 
 class WavAudioTokenizer(AudioTokenizer):
@@ -254,7 +251,7 @@ class WavAudioTokenizer(AudioTokenizer):
 
         audio = self.quantizer.decode(features, bandwidth_id=bandwidth_id).squeeze(0)
 
-        return AudioSignal(audio.detach().cpu().numpy(), self.sampling_rate_tts)
+        return audio.detach().cpu().numpy(), self.sampling_rate_tts
 
 
 class MixedAudioTokenizer(AudioTokenizer):
