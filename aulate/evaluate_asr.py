@@ -179,6 +179,13 @@ class ASREvaluator(Evaluator):
 
             except Exception as e:
                 print(f"Error processing sample {idx}: {str(e)}")
+                result_dict = {
+                    "CER": 100.0,
+                    "WER": 100.0,
+                    "characters_per_second": 0,
+                }
+
+                results.append(result_dict)
                 continue
 
         # Create DataFrame with results

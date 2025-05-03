@@ -1,6 +1,7 @@
 import os
-import random
 import sys
+import random
+import argparse
 
 from transformers import AutoModelForCausalLM
 from vllm import SamplingParams, LLM
@@ -231,7 +232,7 @@ class TTSEvaluator(Evaluator):
             pesq_score = pesq(16000, reference_audio_16k, generated_audio_16k, "wb")
         except Exception as e:
             print(f"PESQ calculation failed: {str(e)}")
-            pesq_score = -1.0
+            pesq_score = -0.5
 
         try:
             stoi_score = stoi(
@@ -271,7 +272,7 @@ class TTSEvaluator(Evaluator):
             )
         except Exception as e:
             print(f"SIM-O calculation failed: {str(e)}")
-            sim_o = -1.0
+            sim_o = 0.0
 
         # Calculate SIM-R (Rhythm Similarity)
         try:
@@ -389,6 +390,15 @@ class TTSEvaluator(Evaluator):
 
             except Exception as e:
                 print(f"Error processing sample {idx}: {str(e)}")
+                result_dict = {
+                    "PESQ": -0.5,
+                    "STOI": -1.0,
+                    "SI-SDR": -50,
+                    "SIM-O": 0.0,
+                    "SIM-R": -1.0,
+                    "sample_idx": idx,
+                }
+                results.append(result_dict)
                 continue
 
         # Create DataFrame with results
@@ -472,9 +482,7 @@ def evaluate_on_librispeech(
 def evaluate_on_mozilla(
     evaluator: TTSEvaluator,
     num_samples: int = 200,
-    prompt: Optional[
-        str
-    ] = "with a natural speaking voice, clear pronunciation, and minimal background noise",
+    prompt: Optional[str] = None,
     subset: str = "ru",
     save_audio=True,
     random_seed: int = 42,
@@ -529,14 +537,34 @@ def evaluate_on_mozilla(
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Evaluate ASR model on LibriSpeech")
+    parser.add_argument(
+        "--model", type=str, default="ksych/salt-audiobooks-last", help="Model name"
+    )
+    parser.add_argument(
+        "--num_samples", type=int, default=None, help="Number of samples to evaluate on"
+    )
+    parser.add_argument(
+        "--prompt", type=str, default=None, help="Prompt to prepend to transcription"
+    )
+    parser.add_argument("--subset", type=str, default="ru", help="Dataset subset")
+    parser.add_argument(
+        "--random_seed", type=int, default=42, help="Random seed to use."
+    )
+
+    args = parser.parse_args()
+
     asr_conf = {"type": "speech", "kwargs": {}}
     tts_conf = {"type": "bigcodec", "kwargs": {}}
 
     evaluator = TTSEvaluator(
-        base_model="ksych/salt-audiobooks-last",
+        base_model=args.model,
         audio_tokenizer_config={"asr": asr_conf, "tts": tts_conf},
     )
 
     results_df = evaluate_on_mozilla(
-        evaluator, num_samples=100, prompt=None, random_seed=43
+        evaluator,
+        num_samples=args.num_samples,
+        prompt=args.prompt,
+        random_seed=args.random_seed,
     )
